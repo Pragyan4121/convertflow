@@ -58,4 +58,13 @@ export const tools: ToolDefinition[] = [
     category: "image",
     status: "active",
   },
+  {
+    id: "Remove-background",
+    name: "Remove Background",
+    description:
+      "Remove image backgrounds automatically and create transparent PNG images.",
+    href: "/tools/remove-background",
+    category: "image",
+    status: "active",
+  },
 ];
