@@ -138,6 +138,18 @@ export function BackgroundRemover() {
     return `${file.name.replace(/\.[^/.]+$/, "")}-no-background.png`;
   }
 
+  function downloadResult() {
+    if (!resultUrl) return;
+
+    const link = document.createElement("a");
+    link.href = resultUrl;
+    link.download = getOutputName();
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   return (
     <div className="w-full">
       <input
@@ -356,13 +368,13 @@ export function BackgroundRemover() {
                 </p>
               )}
 
-              <a
-                href={resultUrl}
-                download={getOutputName()}
+              <button
+                type="button"
+                onClick={downloadResult}
                 className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-green-600 px-6 py-4 font-bold text-white transition hover:bg-green-700 sm:w-auto"
               >
                 ↓ Download Transparent PNG
-              </a>
+              </button>
 
               <div className="mt-4 flex flex-wrap justify-center gap-4">
                 <button
