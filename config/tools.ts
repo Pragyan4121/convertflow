@@ -1,4 +1,4 @@
-export type ToolCategory = "document" | "pdf" | "image" | "utility";
+export type ToolCategory = "document" | "pdf" | "image" | "utility" | "audio";
 
 export type ToolDefinition = {
   id: string;
@@ -64,6 +64,24 @@ export const tools: ToolDefinition[] = [
     description:
       "Remove image backgrounds automatically and create transparent PNG images.",
     href: "/tools/remove-background",
+    category: "image",
+    status: "active",
+  },
+  {
+    id: "vocal-remover",
+    name: "Vocal Remover",
+    description:
+      "Remove vocals from your song and create a clean instrumental version using AI.",
+    href: "/tools/vocal-remover",
+    category: "audio",
+    status: "active",
+  },
+  {
+    id: "document-scanner",
+    name: "Document Scanner",
+    description:
+      "Scan multiple documents or photos, enhance individual pages, and save them as PDF or images.",
+    href: "/tools/document-scanner",
     category: "image",
     status: "active",
   },

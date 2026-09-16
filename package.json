@@ -13,13 +13,16 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@imgly/background-removal": "^1.7.0",
+    "@techstark/opencv-js": "^5.0.0-release.1",
     "docx": "^9.7.1",
     "docx-merger": "^1.2.2",
+    "jszip": "^3.10.2",
     "next": "16.3.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.3.289",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "replicate": "^1.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
