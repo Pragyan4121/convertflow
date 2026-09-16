@@ -85,4 +85,13 @@ export const tools: ToolDefinition[] = [
     category: "image",
     status: "active",
   },
+  {
+    id: "image-text-editor",
+    name: "Image Text Editor",
+    description:
+      "Select text or areas in an image, extract text, edit, blur, pixelate, cover, annotate, and export.",
+    href: "/tools/image-text-editor",
+    category: "image",
+    status: "active",
+  },
 ];
