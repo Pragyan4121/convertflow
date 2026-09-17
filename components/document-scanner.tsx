@@ -1054,16 +1054,213 @@ function CornerEditor({
   );
 }
 
+function CameraCapture({
+  onCapture,
+  onClose,
+}: {
+  onCapture: (file: File) => void;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [capturing, setCapturing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function startCamera() {
+      try {
+        setCameraError("");
+        setCameraReady(false);
+
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error(
+            "Direct browser camera is not supported on this device or browser.",
+          );
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 2560 },
+            height: { ideal: 1920 },
+          },
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+
+        const video = videoRef.current;
+        if (!video) return;
+
+        video.srcObject = stream;
+        await video.play();
+        setCameraReady(true);
+      } catch (caught) {
+        console.error("Direct camera error:", caught);
+        setCameraError(
+          caught instanceof Error
+            ? caught.message
+            : "The browser could not open your camera.",
+        );
+      }
+    }
+
+    void startCamera();
+
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    };
+  }, []);
+
+  async function capturePhoto() {
+    const video = videoRef.current;
+
+    if (
+      !video ||
+      !cameraReady ||
+      video.videoWidth < 2 ||
+      video.videoHeight < 2
+    ) {
+      return;
+    }
+
+    try {
+      setCapturing(true);
+      setCameraError("");
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("The browser could not capture the camera frame.");
+      }
+
+      /*
+       * Capture the browser's live camera frame directly.
+       * No external scanner/camera application is involved, so
+       * third-party scanner branding cannot be injected here.
+       */
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const blob = await canvasToBlob(canvas, "image/jpeg", 0.96);
+      const file = new File([blob], `convertflow-scan-${Date.now()}.jpg`, {
+        type: "image/jpeg",
+        lastModified: Date.now(),
+      });
+
+      onCapture(file);
+      onClose();
+    } catch (caught) {
+      setCameraError(
+        caught instanceof Error
+          ? caught.message
+          : "The photo could not be captured.",
+      );
+    } finally {
+      setCapturing(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col bg-black text-white">
+      <div className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-black/90 px-4 sm:px-6">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full px-3 py-2 text-sm font-semibold text-white/90 transition hover:bg-white/10"
+        >
+          Close
+        </button>
+
+        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-center">
+          <p className="text-sm font-semibold">ConvertFlow Camera</p>
+          <p className="hidden text-[11px] text-white/50 sm:block">
+            Direct capture · No scanner watermark
+          </p>
+        </div>
+
+        <div className="w-14" />
+      </div>
+
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="h-full w-full object-contain"
+        />
+
+        {cameraError && (
+          <div className="absolute inset-x-4 top-6 mx-auto max-w-lg rounded-2xl border border-red-400/30 bg-red-950/90 p-4 text-sm text-red-100 shadow-xl backdrop-blur">
+            <p className="font-semibold">Camera could not start</p>
+            <p className="mt-1 text-red-100/80">{cameraError}</p>
+            <p className="mt-2 text-xs text-red-100/60">
+              Allow camera permission for this site and make sure the page is
+              opened over HTTPS (or localhost during development).
+            </p>
+          </div>
+        )}
+
+        {!cameraReady && !cameraError && (
+          <div className="absolute rounded-full bg-black/70 px-4 py-2 text-sm text-white/80">
+            Opening camera...
+          </div>
+        )}
+
+        {cameraReady && (
+          <div className="pointer-events-none absolute inset-5 rounded-2xl border border-white/45 sm:inset-10">
+            <div className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-[11px] font-medium text-white/80">
+              Keep the whole document inside the frame
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-white/10 bg-black/95 px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-4 sm:px-6">
+        <div className="mx-auto flex max-w-md items-center justify-center">
+          <button
+            type="button"
+            disabled={!cameraReady || capturing}
+            onClick={() => void capturePhoto()}
+            aria-label="Capture document photo"
+            className="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-white/20 shadow-lg transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <span className="h-14 w-14 rounded-full bg-white" />
+          </button>
+        </div>
+
+        <p className="mt-3 text-center text-xs text-white/45">
+          Captured directly in your browser. ConvertFlow does not add a
+          watermark.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function DocumentScanner() {
   const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const cameraRef = useRef<HTMLInputElement | null>(null);
 
   const pagesRef = useRef<ScannerPage[]>([]);
 
   const dragPageId = useRef<string | null>(null);
 
   const [pages, setPages] = useState<ScannerPage[]>([]);
+
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
 
@@ -1532,21 +1729,6 @@ export function DocumentScanner() {
         }}
       />
 
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(event) => {
-          if (event.target.files) {
-            addFiles(event.target.files);
-          }
-
-          event.target.value = "";
-        }}
-      />
-
       {pages.length === 0 ? (
         <div
           onDragEnter={(event) => {
@@ -1608,7 +1790,7 @@ export function DocumentScanner() {
 
             <button
               type="button"
-              onClick={() => cameraRef.current?.click()}
+              onClick={() => setCameraOpen(true)}
               className="rounded-xl border border-blue-200 bg-white px-6 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-50"
             >
               Take Photo
@@ -1645,7 +1827,7 @@ export function DocumentScanner() {
               <button
                 type="button"
                 disabled={isProcessing}
-                onClick={() => cameraRef.current?.click()}
+                onClick={() => setCameraOpen(true)}
                 className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Camera
@@ -1967,6 +2149,13 @@ export function DocumentScanner() {
             </p>
           </div>
         </>
+      )}
+
+      {cameraOpen && (
+        <CameraCapture
+          onCapture={(file) => addFiles([file])}
+          onClose={() => setCameraOpen(false)}
+        />
       )}
 
       {error && (
