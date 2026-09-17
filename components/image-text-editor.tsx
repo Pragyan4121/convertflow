@@ -43,6 +43,9 @@ type DetectedStyle = {
   fontSize: number;
   bold: boolean;
   alignment: "left" | "center" | "right";
+  fontFamily: string;
+  letterSpacing: number;
+  textBounds: Selection;
 };
 
 function createId() {
@@ -215,6 +218,9 @@ function sampleRegionStyle(
       fontSize: Math.max(12, Math.round(height * 0.65)),
       bold: false,
       alignment: "left",
+      fontFamily: "Arial",
+      letterSpacing: 0,
+      textBounds: { x, y, width, height },
     };
   }
 
@@ -307,17 +313,136 @@ function sampleRegionStyle(
   const foregroundRatio =
     foregroundCandidates.length / Math.max(1, pixels.length);
 
-  return {
+  const basicStyle = {
     textColor: rgbToHex(foreground.r, foreground.g, foreground.b),
-
     backgroundColor: rgbToHex(background.r, background.g, background.b),
-
     fontSize: estimatedFontSize,
-
     bold: foregroundRatio > 0.22,
-
-    alignment: "left",
+    alignment: "left" as const,
   };
+  const geometry = analyzeTextGeometry(context, selection, basicStyle);
+  return {
+    ...basicStyle,
+    fontSize: geometry.fontSize,
+    alignment: geometry.alignment,
+    fontFamily: "Arial",
+    letterSpacing: 0,
+    textBounds: geometry.textBounds,
+  };
+}
+
+function analyzeTextGeometry(
+  context: CanvasRenderingContext2D,
+  selection: Selection,
+  style: Omit<DetectedStyle, "fontFamily" | "letterSpacing" | "textBounds">,
+) {
+  const x = Math.max(0, Math.round(selection.x));
+  const y = Math.max(0, Math.round(selection.y));
+  const width = Math.max(1, Math.round(selection.width));
+  const height = Math.max(1, Math.round(selection.height));
+  const data = context.getImageData(x, y, width, height);
+
+  const bgHex = style.backgroundColor.replace("#", "");
+  const bg = {
+    r: Number.parseInt(bgHex.slice(0, 2), 16),
+    g: Number.parseInt(bgHex.slice(2, 4), 16),
+    b: Number.parseInt(bgHex.slice(4, 6), 16),
+  };
+
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  const threshold = 48;
+
+  for (let py = 0; py < height; py += 1) {
+    for (let px = 0; px < width; px += 1) {
+      const i = (py * width + px) * 4;
+      if (data.data[i + 3] < 160) continue;
+      const pixel = {
+        r: data.data[i],
+        g: data.data[i + 1],
+        b: data.data[i + 2],
+      };
+      if (colorDistance(pixel, bg) < threshold) continue;
+      minX = Math.min(minX, px);
+      minY = Math.min(minY, py);
+      maxX = Math.max(maxX, px);
+      maxY = Math.max(maxY, py);
+    }
+  }
+
+  const hasForeground = maxX >= minX && maxY >= minY;
+  const localBounds = hasForeground
+    ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+    : { x: 0, y: 0, width, height };
+
+  const leftGap = localBounds.x;
+  const rightGap = width - (localBounds.x + localBounds.width);
+  let alignment: "left" | "center" | "right" = "left";
+  if (Math.abs(leftGap - rightGap) <= Math.max(3, width * 0.08))
+    alignment = "center";
+  else if (rightGap < leftGap * 0.45) alignment = "right";
+
+  const visibleHeight = Math.max(1, localBounds.height);
+  const fontSize = clamp(Math.round(visibleHeight / 0.76), 8, 240);
+
+  return {
+    alignment,
+    fontSize,
+    textBounds: {
+      x: x + localBounds.x,
+      y: y + localBounds.y,
+      width: localBounds.width,
+      height: localBounds.height,
+    },
+  };
+}
+
+function chooseClosestFont(
+  context: CanvasRenderingContext2D,
+  text: string,
+  targetWidth: number,
+  fontSize: number,
+  bold: boolean,
+) {
+  const candidates = [
+    "Arial",
+    "Helvetica",
+    "Inter",
+    "Roboto",
+    "Verdana",
+    "Tahoma",
+    "Trebuchet MS",
+    "Georgia",
+    "Times New Roman",
+  ];
+  const sample = text.replace(/\\s+/g, " ").trim() || "Text";
+  let best = candidates[0];
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (const family of candidates) {
+    context.font = `${bold ? "700" : "400"} ${fontSize}px "${family}", sans-serif`;
+    const diff = Math.abs(context.measureText(sample).width - targetWidth);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = family;
+    }
+  }
+  return best;
+}
+
+function drawTextWithSpacing(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  letterSpacing: number,
+) {
+  let cursor = x;
+  for (const character of text) {
+    context.fillText(character, cursor, y);
+    cursor += context.measureText(character).width + letterSpacing;
+  }
 }
 
 function wrapText(
@@ -365,6 +490,7 @@ function findFittingTextLayout({
   height,
   startingFontSize,
   bold,
+  fontFamily = "Arial",
 }: {
   context: CanvasRenderingContext2D;
   text: string;
@@ -372,6 +498,7 @@ function findFittingTextLayout({
   height: number;
   startingFontSize: number;
   bold: boolean;
+  fontFamily?: string;
 }) {
   const paddingX = Math.max(2, Math.round(width * 0.025));
 
@@ -386,9 +513,7 @@ function findFittingTextLayout({
   let lines: string[] = [];
 
   while (fontSize >= 8) {
-    context.font = `${
-      bold ? "700" : "400"
-    } ${fontSize}px Arial, Helvetica, sans-serif`;
+    context.font = `${bold ? "700" : "400"} ${fontSize}px "${fontFamily}", Arial, sans-serif`;
 
     lines = wrapText(context, text, availableWidth);
 
@@ -414,7 +539,7 @@ function findFittingTextLayout({
     fontSize -= 1;
   }
 
-  context.font = `${bold ? "700" : "400"} 8px Arial, Helvetica, sans-serif`;
+  context.font = `${bold ? "700" : "400"} 8px "${fontFamily}", Arial, sans-serif`;
 
   lines = wrapText(context, text, availableWidth);
 
@@ -866,8 +991,6 @@ export function ImageTextEditor() {
 
       const style = sampleRegionStyle(context, selection);
 
-      setDetectedStyle(style);
-
       const selectedCanvas = document.createElement("canvas");
 
       selectedCanvas.width = Math.max(1, Math.round(selection.width));
@@ -900,6 +1023,27 @@ export function ImageTextEditor() {
         const result = await worker.recognize(selectedCanvas);
 
         const detected = result.data.text.trim();
+        const matchedStyle = { ...style };
+        if (detected) {
+          matchedStyle.fontFamily = chooseClosestFont(
+            context,
+            detected,
+            Math.max(1, style.textBounds.width),
+            style.fontSize,
+            style.bold,
+          );
+          context.font = `${style.bold ? "700" : "400"} ${style.fontSize}px "${matchedStyle.fontFamily}", sans-serif`;
+          const naturalWidth = context.measureText(
+            detected.replace(/\s+/g, " "),
+          ).width;
+          const gaps = Math.max(1, detected.replace(/\s/g, "").length - 1);
+          matchedStyle.letterSpacing = clamp(
+            (style.textBounds.width - naturalWidth) / gaps,
+            -2,
+            4,
+          );
+        }
+        setDetectedStyle(matchedStyle);
 
         setOcrText(detected);
 
@@ -975,8 +1119,23 @@ export function ImageTextEditor() {
       context.save();
 
       context.fillStyle = style.backgroundColor;
-
-      context.fillRect(x, y, width, height);
+      const erasePad = Math.max(1, Math.round(style.fontSize * 0.08));
+      const eraseX = Math.max(x, Math.round(style.textBounds.x - erasePad));
+      const eraseY = Math.max(y, Math.round(style.textBounds.y - erasePad));
+      const eraseRight = Math.min(
+        x + width,
+        Math.round(style.textBounds.x + style.textBounds.width + erasePad),
+      );
+      const eraseBottom = Math.min(
+        y + height,
+        Math.round(style.textBounds.y + style.textBounds.height + erasePad),
+      );
+      context.fillRect(
+        eraseX,
+        eraseY,
+        Math.max(1, eraseRight - eraseX),
+        Math.max(1, eraseBottom - eraseY),
+      );
 
       context.restore();
 
@@ -995,16 +1154,14 @@ export function ImageTextEditor() {
         startingFontSize: style.fontSize,
 
         bold: style.bold,
+        fontFamily: style.fontFamily,
       });
 
       context.save();
 
       context.fillStyle = style.textColor;
 
-      context.font = `${
-        style.bold ? "700" : "400"
-      } ${layout.fontSize}px Arial, Helvetica, sans-serif`;
-
+      context.font = `${style.bold ? "700" : "400"} ${layout.fontSize}px "${style.fontFamily}", Arial, sans-serif`;
       context.textBaseline = "top";
 
       const totalHeight = layout.lines.length * layout.lineHeight;
@@ -1013,22 +1170,33 @@ export function ImageTextEditor() {
        * Vertically center text inside
        * the original selection.
        */
-      const startY = y + Math.max(layout.paddingY, (height - totalHeight) / 2);
+      const originalTop = style.textBounds.y;
+      const startY = clamp(
+        originalTop - Math.max(0, (layout.fontSize - style.fontSize) * 0.18),
+        y,
+        y + height - totalHeight,
+      );
 
       layout.lines.forEach((line, index) => {
         const measured = context.measureText(line).width;
 
-        let lineX = x + layout.paddingX;
+        let lineX = Math.max(x, style.textBounds.x);
 
         if (style.alignment === "center") {
-          lineX = x + (width - measured) / 2;
+          lineX = style.textBounds.x + (style.textBounds.width - measured) / 2;
         }
 
         if (style.alignment === "right") {
-          lineX = x + width - layout.paddingX - measured;
+          lineX = style.textBounds.x + style.textBounds.width - measured;
         }
 
-        context.fillText(line, lineX, startY + index * layout.lineHeight);
+        drawTextWithSpacing(
+          context,
+          line,
+          lineX,
+          startY + index * layout.lineHeight,
+          style.letterSpacing,
+        );
       });
 
       context.restore();
