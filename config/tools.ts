@@ -94,4 +94,13 @@ export const tools: ToolDefinition[] = [
     category: "image",
     status: "active",
   },
+  {
+    id: "pdf-to-image",
+    name: "PDF to Image",
+    description:
+      "Convert PDF pages to high-quality JPG or PNG images in your browser.",
+    href: "/tools/pdf-to-image",
+    category: "pdf",
+    status: "active",
+  },
 ];
