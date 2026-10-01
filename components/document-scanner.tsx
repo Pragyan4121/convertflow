@@ -26,6 +26,7 @@ type ScannerPage = {
   id: string;
   file: File;
   previewUrl: string;
+  croppedPreviewUrl?: string;
   mode: ScanMode;
   rotation: number;
 
@@ -1292,6 +1293,9 @@ export function DocumentScanner() {
     return () => {
       pagesRef.current.forEach((page) => {
         URL.revokeObjectURL(page.previewUrl);
+        if (page.croppedPreviewUrl) {
+          URL.revokeObjectURL(page.croppedPreviewUrl);
+        }
       });
     };
   }, []);
@@ -1419,6 +1423,9 @@ export function DocumentScanner() {
 
       if (target) {
         URL.revokeObjectURL(target.previewUrl);
+        if (target.croppedPreviewUrl) {
+          URL.revokeObjectURL(target.croppedPreviewUrl);
+        }
       }
 
       return current.filter((page) => page.id !== id);
@@ -1430,6 +1437,9 @@ export function DocumentScanner() {
 
     pages.forEach((page) => {
       URL.revokeObjectURL(page.previewUrl);
+      if (page.croppedPreviewUrl) {
+        URL.revokeObjectURL(page.croppedPreviewUrl);
+      }
     });
 
     setPages([]);
@@ -1438,8 +1448,14 @@ export function DocumentScanner() {
   }
 
   function resetPage(id: string) {
+    const page = pagesRef.current.find((item) => item.id === id);
+    if (page?.croppedPreviewUrl) {
+      URL.revokeObjectURL(page.croppedPreviewUrl);
+    }
+
     updatePage(id, {
       mode: "original",
+      croppedPreviewUrl: undefined,
       rotation: 0,
       corners: cloneCorners(DEFAULT_CORNERS),
       detected: false,
@@ -1469,6 +1485,18 @@ export function DocumentScanner() {
 
       return next;
     });
+  }
+
+  async function createCroppedPreview(page: ScannerPage, corners: Corners) {
+    const cropPage: ScannerPage = {
+      ...page,
+      mode: "auto",
+      corners: cloneCorners(corners),
+    };
+
+    const croppedCanvas = await createPerspectiveCanvas(cropPage, "balanced");
+    const blob = await canvasToBlob(croppedCanvas, "image/jpeg", 0.9);
+    return URL.createObjectURL(blob);
   }
 
   async function selectScanMode(page: ScannerPage, mode: ScanMode) {
@@ -1879,7 +1907,7 @@ export function DocumentScanner() {
                 <div className="relative flex aspect-[3/4] items-center justify-center overflow-hidden bg-gray-100 p-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={page.previewUrl}
+                    src={page.croppedPreviewUrl ?? page.previewUrl}
                     alt={`Page ${index + 1}`}
                     draggable={false}
                     className="max-h-full max-w-full object-contain transition duration-200"
@@ -2186,12 +2214,42 @@ export function DocumentScanner() {
           }
           onCancel={() => setEditor(null)}
           onApply={() => {
-            updatePage(editorPage.id, {
-              corners: cloneCorners(editor.corners),
-              detectionAttempted: true,
-            });
+            void (async () => {
+              try {
+                setIsProcessing(true);
+                setProcessingText("Applying crop...");
+                setError("");
 
-            setEditor(null);
+                const croppedPreviewUrl = await createCroppedPreview(
+                  editorPage,
+                  editor.corners,
+                );
+
+                if (editorPage.croppedPreviewUrl) {
+                  URL.revokeObjectURL(editorPage.croppedPreviewUrl);
+                }
+
+                updatePage(editorPage.id, {
+                  corners: cloneCorners(editor.corners),
+                  croppedPreviewUrl,
+                  mode:
+                    editorPage.mode === "original" ? "auto" : editorPage.mode,
+                  detected: true,
+                  detectionAttempted: true,
+                });
+
+                setEditor(null);
+              } catch (caught) {
+                setError(
+                  caught instanceof Error
+                    ? caught.message
+                    : "The crop could not be applied.",
+                );
+              } finally {
+                setIsProcessing(false);
+                setProcessingText("");
+              }
+            })();
           }}
           onAutoDetect={() => {
             void (async () => {
