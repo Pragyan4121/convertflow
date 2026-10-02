@@ -51,7 +51,8 @@ type FlowStage =
   | "selected"
   | "processing"
   | "ready"
-  | "download-started";
+  | "download-started"
+  | "download-completed";
 
 type WritableSaveFile = {
   write: (data: Blob) => Promise<void>;
@@ -76,6 +77,18 @@ type NavigatorWithFileShare = Navigator & {
   canShare?: (data?: ShareData) => boolean;
   share?: (data?: ShareData) => Promise<void>;
 };
+
+function normalizePdfFilename(value: string) {
+  const cleaned = value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/g, "");
+
+  const base = cleaned || "ConvertFlow-Merged";
+
+  return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+}
 
 function formatFileSize(bytes: number) {
   if (bytes === 0) return "0 Bytes";
@@ -187,6 +200,8 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
     "ready",
 
     "download-started",
+
+    "download-completed",
   ];
 
   const activeIndex = stageOrder.indexOf(stage);
@@ -221,7 +236,12 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
 
       title: "Download",
 
-      description: "Your browser has started the download.",
+      description:
+        stage === "download-completed"
+          ? "Your merged PDF has been saved successfully."
+          : stage === "download-started"
+            ? "Saving your merged PDF..."
+            : "Save the merged PDF with your preferred file name.",
     },
   ];
 
@@ -351,6 +371,12 @@ export function FileUploader({
   const [downloadUrl, setDownloadUrl] = useState("");
 
   const [mergedBlob, setMergedBlob] = useState<Blob | null>(null);
+
+  const [outputFilename, setOutputFilename] = useState(
+    "ConvertFlow-Merged.pdf",
+  );
+
+  const [isSaving, setIsSaving] = useState(false);
 
   const [flowStage, setFlowStage] = useState<FlowStage>("idle");
 
@@ -598,18 +624,23 @@ export function FileUploader({
       return;
     }
 
-    const outputFilename = "ConvertFlow-Merged.pdf";
+    const finalFilename = normalizePdfFilename(outputFilename);
+    setOutputFilename(finalFilename);
 
     try {
       setError("");
+      setIsSaving(true);
+      setFlowStage("download-started");
 
-      // Desktop Chromium: show a real Save As dialog.
+      // Desktop Chromium and other browsers that support the File System Access API:
+      // show a real Save As dialog. The promise resolves only after the Blob has
+      // been written and the writable stream has been closed.
       const savePicker = (window as WindowWithSaveFilePicker)
         .showSaveFilePicker;
 
       if (savePicker) {
         const fileHandle = await savePicker({
-          suggestedName: outputFilename,
+          suggestedName: finalFilename,
           types: [
             {
               description: "PDF document",
@@ -624,13 +655,14 @@ export function FileUploader({
         await writable.write(mergedBlob);
         await writable.close();
 
-        setFlowStage("download-started");
+        setFlowStage("download-completed");
         return;
       }
 
-      // Mobile fallback: open the native share sheet when file sharing is supported.
+      // Mobile browsers: use the native share/save sheet when file sharing is
+      // supported. The user can choose Save to Files or another destination.
       const shareNavigator = navigator as NavigatorWithFileShare;
-      const mergedFile = new File([mergedBlob], outputFilename, {
+      const mergedFile = new File([mergedBlob], finalFilename, {
         type: "application/pdf",
         lastModified: Date.now(),
       });
@@ -643,19 +675,22 @@ export function FileUploader({
       ) {
         await shareNavigator.share({
           files: [mergedFile],
-          title: "ConvertFlow Merged PDF",
+          title: finalFilename,
         });
 
-        setFlowStage("download-started");
+        setFlowStage("download-completed");
         return;
       }
 
-      // Final fallback: trigger a normal browser download.
+      // Final fallback: trigger a normal browser download using the chosen name.
+      // Blob downloads are local, so there is no network transfer to wait for.
+      // Browsers do not expose a disk-write completion event for <a download>,
+      // so mark complete once the local file has been handed to the browser.
       const temporaryUrl = URL.createObjectURL(mergedBlob);
       const anchor = document.createElement("a");
 
       anchor.href = temporaryUrl;
-      anchor.download = outputFilename;
+      anchor.download = finalFilename;
       anchor.style.display = "none";
 
       document.body.appendChild(anchor);
@@ -664,39 +699,22 @@ export function FileUploader({
 
       window.setTimeout(() => {
         URL.revokeObjectURL(temporaryUrl);
-      }, 5000);
-
-      setFlowStage("download-started");
+        setFlowStage("download-completed");
+      }, 800);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
+        setFlowStage("ready");
         return;
       }
 
       console.error("Merged PDF download error:", err);
+      setFlowStage("ready");
 
-      // If native save/share fails, still try a direct browser download.
-      try {
-        const temporaryUrl = URL.createObjectURL(mergedBlob);
-        const anchor = document.createElement("a");
-
-        anchor.href = temporaryUrl;
-        anchor.download = outputFilename;
-        anchor.style.display = "none";
-
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-
-        window.setTimeout(() => {
-          URL.revokeObjectURL(temporaryUrl);
-        }, 5000);
-
-        setFlowStage("download-started");
-      } catch {
-        setError(
-          "The merged PDF is ready, but your browser blocked the download. Please allow downloads for this site and try again.",
-        );
-      }
+      setError(
+        "The merged PDF is ready, but it could not be saved. Please allow downloads for this site and try again.",
+      );
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -898,21 +916,73 @@ export function FileUploader({
                   {files.length} PDF files were successfully combined.
                 </p>
 
+                <div className="mx-auto mt-5 max-w-md text-left">
+                  <label
+                    htmlFor="merged-pdf-filename"
+                    className="text-sm font-semibold text-gray-800"
+                  >
+                    File name
+                  </label>
+
+                  <div className="mt-2 flex items-center rounded-xl border border-gray-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
+                    <input
+                      id="merged-pdf-filename"
+                      type="text"
+                      value={outputFilename}
+                      disabled={isSaving}
+                      onChange={(event) => {
+                        setOutputFilename(event.target.value);
+
+                        if (
+                          flowStage === "download-started" ||
+                          flowStage === "download-completed"
+                        ) {
+                          setFlowStage("ready");
+                        }
+                      }}
+                      onBlur={() =>
+                        setOutputFilename((current) =>
+                          normalizePdfFilename(current),
+                        )
+                      }
+                      className="min-w-0 flex-1 rounded-xl bg-transparent px-4 py-3 text-sm text-gray-900 outline-none disabled:bg-gray-50 disabled:text-gray-500"
+                      aria-describedby="merged-pdf-filename-help"
+                    />
+                  </div>
+
+                  <p
+                    id="merged-pdf-filename-help"
+                    className="mt-2 text-xs text-gray-500"
+                  >
+                    Keep the suggested name or type your own. .pdf is added
+                    automatically if it is missing.
+                  </p>
+                </div>
+
                 <button
                   type="button"
                   onClick={() => void downloadMergedPdf()}
-                  disabled={!mergedBlob}
+                  disabled={!mergedBlob || isSaving}
                   className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-green-600 px-6 py-4 font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300 sm:w-auto"
                 >
-                  ↓ Download Merged PDF
+                  {isSaving ? "Saving PDF..." : "↓ Save / Download Merged PDF"}
                 </button>
 
                 {flowStage === "download-started" && (
                   <p
                     role="status"
-                    className="mt-4 text-sm font-medium text-green-700"
+                    className="mt-4 text-sm font-medium text-blue-700"
                   >
-                    Download started.
+                    Download started...
+                  </p>
+                )}
+
+                {flowStage === "download-completed" && (
+                  <p
+                    role="status"
+                    className="mt-4 text-sm font-semibold text-green-700"
+                  >
+                    ✓ Download completed.
                   </p>
                 )}
               </div>
