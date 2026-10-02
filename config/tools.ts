@@ -103,4 +103,14 @@ export const tools: ToolDefinition[] = [
     category: "pdf",
     status: "active",
   },
+
+  {
+    id: "ai-photo-studio",
+    name: "AI Professional Photo Studio",
+    description:
+      "Create professional headshots, change outfits and backgrounds, and export custom photo sizes while preserving facial identity.",
+    href: "/tools/ai-photo-studio",
+    category: "image",
+    status: "active",
+  },
 ];
