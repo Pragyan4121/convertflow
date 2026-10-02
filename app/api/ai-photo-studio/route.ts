@@ -191,7 +191,11 @@ export async function POST(request: Request) {
       type: image.type,
     });
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      maxRetries: 2,
+      timeout: 110_000,
+    });
     const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-sunburst";
 
     const response = await client.images.edit({
@@ -221,49 +225,151 @@ export async function POST(request: Request) {
 
     const error = caught as {
       code?: string;
+      type?: string;
       status?: number;
       message?: string;
-      moderation_details?: unknown;
+      error?: {
+        code?: string;
+        type?: string;
+        message?: string;
+      };
     };
 
-    if (error.code === "moderation_blocked") {
+    const errorCode = error.code ?? error.error?.code ?? "";
+
+    const errorType = error.type ?? error.error?.type ?? "";
+
+    const errorMessage = error.message ?? error.error?.message ?? "";
+
+    const normalizedMessage = errorMessage.toLowerCase();
+
+    /*
+     * Content / moderation error
+     */
+    if (
+      errorCode === "moderation_blocked" ||
+      normalizedMessage.includes("moderation")
+    ) {
       return NextResponse.json(
         {
           error:
-            "This image or edit request could not be processed. Try a different portrait or studio option.",
+            "This image or edit request could not be processed. Please try another portrait or studio option.",
         },
         { status: 400 },
       );
     }
 
-    if (error.status === 429) {
+    /*
+     * API credit exhausted
+     */
+    if (
+      errorCode === "credit_balance_exhausted" ||
+      normalizedMessage.includes("credit balance") ||
+      normalizedMessage.includes("billing quota")
+    ) {
       return NextResponse.json(
         {
           error:
-            "The AI image service is busy or has reached its current limit. Please try again shortly.",
-        },
-        { status: 429 },
-      );
-    }
-
-    if (error.status === 401) {
-      return NextResponse.json(
-        {
-          error:
-            "The AI image service is not configured correctly on the server.",
+            "AI Photo Studio has temporarily reached its available API credit. Please try again after the service credit is restored.",
         },
         { status: 503 },
       );
     }
 
+    /*
+     * Project hard spending limit
+     */
+    if (errorCode === "project_spend_limit_exceeded") {
+      return NextResponse.json(
+        {
+          error:
+            "AI Photo Studio has temporarily reached its project usage limit. Please try again later.",
+        },
+        { status: 503 },
+      );
+    }
+
+    /*
+     * Organization spending limit
+     */
+    if (errorCode === "organization_spend_limit_exceeded") {
+      return NextResponse.json(
+        {
+          error:
+            "AI Photo Studio has temporarily reached its service spending limit. Please try again later.",
+        },
+        { status: 503 },
+      );
+    }
+
+    /*
+     * Organization monthly usage allowance
+     */
+    if (errorCode === "organization_usage_limit_exceeded") {
+      return NextResponse.json(
+        {
+          error:
+            "AI Photo Studio has temporarily reached its API usage allowance. Please try again later.",
+        },
+        { status: 503 },
+      );
+    }
+
+    /*
+     * Temporary rate limit.
+     * The OpenAI SDK has already retried eligible temporary failures.
+     */
     if (
-      error.status === 402 ||
-      error.message?.toLowerCase().includes("billing")
+      error.status === 429 ||
+      errorCode === "slow_down" ||
+      errorType === "rate_limit_error"
     ) {
       return NextResponse.json(
         {
           error:
-            "The AI image service currently has no available billing credit.",
+            "AI Photo Studio is receiving too many requests right now. Please wait a moment and try again.",
+        },
+        { status: 429 },
+      );
+    }
+
+    /*
+     * Temporary model overload
+     */
+    if (error.status === 503 || errorCode === "server_is_overloaded") {
+      return NextResponse.json(
+        {
+          error:
+            "The AI image service is temporarily busy. Please wait a moment and try again.",
+        },
+        { status: 503 },
+      );
+    }
+
+    /*
+     * API key / authentication problem
+     */
+    if (error.status === 401) {
+      return NextResponse.json(
+        {
+          error: "AI Photo Studio is not configured correctly on the server.",
+        },
+        { status: 503 },
+      );
+    }
+
+    /*
+     * Other billing-related failures
+     */
+    if (
+      error.status === 402 ||
+      errorType === "insufficient_quota" ||
+      normalizedMessage.includes("billing")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "AI Photo Studio currently has no available API usage allowance.",
         },
         { status: 503 },
       );
@@ -272,8 +378,8 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          error.message && error.message.length < 240
-            ? error.message
+          errorMessage && errorMessage.length < 240
+            ? errorMessage
             : "The professional photo could not be generated. Please try again.",
       },
       { status: 500 },

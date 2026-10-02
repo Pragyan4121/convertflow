@@ -216,8 +216,8 @@ export function AiPhotoStudio() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [purpose, setPurpose] = useState<Purpose>("professional");
-  const [outfit, setOutfit] = useState<Outfit>("navy-suit");
-  const [background, setBackground] = useState<Background>("light-gray");
+  const [outfit, setOutfit] = useState<Outfit>("unchanged");
+  const [background, setBackground] = useState<Background>("unchanged");
   const [quality, setQuality] = useState<Quality>("standard");
   const [sizePreset, setSizePreset] = useState("cv");
   const [customWidth, setCustomWidth] = useState(1200);
@@ -278,6 +278,10 @@ export function AiPhotoStudio() {
     setFile(nextFile);
     setPreviewUrl(URL.createObjectURL(nextFile));
     setFilename(safeFileName(nextFile.name));
+
+    setOutfit("unchanged");
+    setBackground("unchanged");
+
     resetResults();
   }
 
