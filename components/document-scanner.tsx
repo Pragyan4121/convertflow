@@ -14,6 +14,7 @@ type ScanMode = "original" | "auto" | "color" | "grayscale" | "bw";
 type ExportFormat = "jpg" | "png";
 type PdfPageSize = "auto" | "a4";
 type QualityMode = "high" | "balanced" | "small";
+type PdfDownloadStatus = "idle" | "saving" | "completed";
 
 type Point = {
   x: number;
@@ -230,6 +231,61 @@ function downloadBlob(blob: Blob, filename: string) {
   }, 1000);
 }
 
+async function saveBlob(
+  blob: Blob,
+  filename: string,
+  mimeType = "application/pdf",
+): Promise<"saved" | "cancelled"> {
+  const file = new File([blob], filename, {
+    type: mimeType,
+    lastModified: Date.now(),
+  });
+
+  const isMobileDevice =
+    typeof navigator !== "undefined" &&
+    (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
+  if (
+    isMobileDevice &&
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function" &&
+    navigator.canShare({ files: [file] })
+  ) {
+    try {
+      await navigator.share({
+        files: [file],
+        title: filename,
+      });
+
+      return "saved";
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") {
+        return "cancelled";
+      }
+
+      console.warn("Native PDF save failed. Falling back to download.", caught);
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = "none";
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 10_000);
+
+  return "saved";
+}
+
 function distance(a: Point, b: Point) {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
@@ -261,10 +317,6 @@ async function detectDocument(imageUrl: string): Promise<{
 
   const canvas = document.createElement("canvas");
 
-  /*
-   * Detection does not need the
-   * full camera resolution.
-   */
   const maxSide = 1400;
 
   const scale = Math.min(
@@ -351,10 +403,6 @@ async function detectDocument(imageUrl: string): Promise<{
 
         const area = Math.abs(cv.contourArea(approximation));
 
-        /*
-         * Ignore tiny rectangular
-         * objects inside the photo.
-         */
         if (area < imageArea * 0.12) {
           continue;
         }
@@ -442,10 +490,6 @@ async function createPerspectiveCanvas(
 
   sourceContext.drawImage(image, 0, 0, width, height);
 
-  /*
-   * Original mode intentionally
-   * preserves the full photo.
-   */
   if (page.mode === "original") {
     return sourceCanvas;
   }
@@ -593,11 +637,6 @@ function applyScanStyle(sourceCanvas: HTMLCanvasElement, mode: ScanMode) {
 
     const data = imageData.data;
 
-    /*
-     * Calculate an average luminance
-     * first. This adapts better than
-     * one fixed threshold.
-     */
     let total = 0;
     let pixels = 0;
 
@@ -678,10 +717,6 @@ async function renderPage(
 
   const finalCanvas = rotateCanvas(enhanced, page.rotation);
 
-  /*
-   * Ensure JPG gets a white
-   * background.
-   */
   let exportCanvas = finalCanvas;
 
   if (format === "jpg") {
@@ -822,10 +857,6 @@ function CornerEditor({
     .map((point) => `${point.x * 100},${point.y * 100}`)
     .join(" ");
 
-  /*
-   * Creates four surrounding polygons so the area
-   * outside the selected document is darkened.
-   */
   const [tl, tr, br, bl] = corners;
 
   const topMask = `
@@ -860,7 +891,6 @@ function CornerEditor({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black text-white">
-      {/* Top toolbar */}
       <div className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-black/90 px-4 backdrop-blur-xl sm:px-6">
         <button
           type="button"
@@ -888,7 +918,6 @@ function CornerEditor({
         </button>
       </div>
 
-      {/* Image workspace */}
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#111] p-3 sm:p-6">
         <div
           ref={containerRef}
@@ -902,7 +931,6 @@ function CornerEditor({
             className="block max-h-[calc(100vh-150px)] max-w-[calc(100vw-24px)] object-contain sm:max-h-[calc(100vh-180px)] sm:max-w-[calc(100vw-48px)]"
           />
 
-          {/* Darkened outside area */}
           <svg
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
@@ -913,7 +941,6 @@ function CornerEditor({
             <polygon points={bottomMask} fill="rgba(0,0,0,0.58)" />
             <polygon points={leftMask} fill="rgba(0,0,0,0.58)" />
 
-            {/* Selected document border */}
             <polygon
               points={polygonPoints}
               fill="rgba(255,255,255,0.025)"
@@ -923,7 +950,6 @@ function CornerEditor({
               strokeLinejoin="round"
             />
 
-            {/* Subtle rule-of-thirds guides */}
             <line
               x1={(tl.x + (tr.x - tl.x) / 3) * 100}
               y1={(tl.y + (tr.y - tl.y) / 3) * 100}
@@ -965,7 +991,6 @@ function CornerEditor({
             />
           </svg>
 
-          {/* Corner handles */}
           {corners.map((point, index) => (
             <button
               key={index}
@@ -992,7 +1017,6 @@ function CornerEditor({
             </button>
           ))}
 
-          {/* Magnifying loupe */}
           {activeCorner !== null && loupePosition && (
             <div
               className="pointer-events-none absolute z-40 h-24 w-24 overflow-hidden rounded-full border-[3px] border-white bg-black shadow-[0_5px_25px_rgba(0,0,0,0.7)] sm:h-28 sm:w-28"
@@ -1008,13 +1032,14 @@ function CornerEditor({
                   backgroundImage: `url("${page.previewUrl}")`,
                   backgroundRepeat: "no-repeat",
                   backgroundSize: "300% 300%",
-                  backgroundPosition: `${
-                    corners[activeCorner].x * 100
-                  }% ${corners[activeCorner].y * 100}%`,
+                  backgroundPosition: `${corners[activeCorner].x * 100}% ${
+                    corners[activeCorner].y * 100
+                  }%`,
                 }}
               />
 
               <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/80" />
+
               <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/80" />
 
               <div className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-black/20" />
@@ -1022,7 +1047,6 @@ function CornerEditor({
           )}
         </div>
 
-        {/* Instruction bubble */}
         {activeCorner === null && (
           <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/70 px-4 py-2 text-xs font-medium text-white/80 shadow-lg backdrop-blur-md sm:bottom-6">
             Drag a corner to adjust the document
@@ -1030,7 +1054,6 @@ function CornerEditor({
         )}
       </div>
 
-      {/* Bottom toolbar */}
       <div className="relative z-20 shrink-0 border-t border-white/10 bg-black/95 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl sm:px-6">
         <div className="mx-auto flex max-w-xl items-center gap-3">
           <button
@@ -1063,9 +1086,13 @@ function CameraCapture({
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
   const streamRef = useRef<MediaStream | null>(null);
+
   const [cameraReady, setCameraReady] = useState(false);
+
   const [cameraError, setCameraError] = useState("");
+
   const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
@@ -1085,27 +1112,38 @@ function CameraCapture({
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 2560 },
-            height: { ideal: 1920 },
+            facingMode: {
+              ideal: "environment",
+            },
+            width: {
+              ideal: 2560,
+            },
+            height: {
+              ideal: 1920,
+            },
           },
         });
 
         if (cancelled) {
           stream.getTracks().forEach((track) => track.stop());
+
           return;
         }
 
         streamRef.current = stream;
 
         const video = videoRef.current;
+
         if (!video) return;
 
         video.srcObject = stream;
+
         await video.play();
+
         setCameraReady(true);
       } catch (caught) {
         console.error("Direct camera error:", caught);
+
         setCameraError(
           caught instanceof Error
             ? caught.message
@@ -1118,7 +1156,9 @@ function CameraCapture({
 
     return () => {
       cancelled = true;
+
       streamRef.current?.getTracks().forEach((track) => track.stop());
+
       streamRef.current = null;
     };
   }, []);
@@ -1140,22 +1180,20 @@ function CameraCapture({
       setCameraError("");
 
       const canvas = document.createElement("canvas");
+
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
       const context = canvas.getContext("2d");
+
       if (!context) {
         throw new Error("The browser could not capture the camera frame.");
       }
 
-      /*
-       * Capture the browser's live camera frame directly.
-       * No external scanner/camera application is involved, so
-       * third-party scanner branding cannot be injected here.
-       */
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       const blob = await canvasToBlob(canvas, "image/jpeg", 0.96);
+
       const file = new File([blob], `convertflow-scan-${Date.now()}.jpg`, {
         type: "image/jpeg",
         lastModified: Date.now(),
@@ -1187,6 +1225,7 @@ function CameraCapture({
 
         <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-center">
           <p className="text-sm font-semibold">ConvertFlow Camera</p>
+
           <p className="hidden text-[11px] text-white/50 sm:block">
             Direct capture · No scanner watermark
           </p>
@@ -1207,7 +1246,9 @@ function CameraCapture({
         {cameraError && (
           <div className="absolute inset-x-4 top-6 mx-auto max-w-lg rounded-2xl border border-red-400/30 bg-red-950/90 p-4 text-sm text-red-100 shadow-xl backdrop-blur">
             <p className="font-semibold">Camera could not start</p>
+
             <p className="mt-1 text-red-100/80">{cameraError}</p>
+
             <p className="mt-2 text-xs text-red-100/60">
               Allow camera permission for this site and make sure the page is
               opened over HTTPS (or localhost during development).
@@ -1285,6 +1326,13 @@ export function DocumentScanner() {
 
   const [error, setError] = useState("");
 
+  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
+
+  const [pdfReady, setPdfReady] = useState(false);
+
+  const [pdfDownloadStatus, setPdfDownloadStatus] =
+    useState<PdfDownloadStatus>("idle");
+
   useEffect(() => {
     pagesRef.current = pages;
   }, [pages]);
@@ -1293,6 +1341,7 @@ export function DocumentScanner() {
     return () => {
       pagesRef.current.forEach((page) => {
         URL.revokeObjectURL(page.previewUrl);
+
         if (page.croppedPreviewUrl) {
           URL.revokeObjectURL(page.croppedPreviewUrl);
         }
@@ -1300,7 +1349,15 @@ export function DocumentScanner() {
     };
   }, []);
 
+  function clearPdfResult() {
+    setPdfBlob(null);
+    setPdfReady(false);
+    setPdfDownloadStatus("idle");
+  }
+
   function updatePage(id: string, changes: Partial<ScannerPage>) {
+    clearPdfResult();
+
     setPages((current) =>
       current.map((page) =>
         page.id === id
@@ -1383,6 +1440,7 @@ export function DocumentScanner() {
         file.size > MAX_FILE_SIZE
       ) {
         skipped++;
+
         return;
       }
 
@@ -1403,6 +1461,8 @@ export function DocumentScanner() {
       return;
     }
 
+    clearPdfResult();
+
     const newPages = valid.map<ScannerPage>((file) => ({
       id: createId(),
       file,
@@ -1418,11 +1478,14 @@ export function DocumentScanner() {
   }
 
   function deletePage(id: string) {
+    clearPdfResult();
+
     setPages((current) => {
       const target = current.find((page) => page.id === id);
 
       if (target) {
         URL.revokeObjectURL(target.previewUrl);
+
         if (target.croppedPreviewUrl) {
           URL.revokeObjectURL(target.croppedPreviewUrl);
         }
@@ -1435,8 +1498,11 @@ export function DocumentScanner() {
   function clearAll() {
     if (isProcessing) return;
 
+    clearPdfResult();
+
     pages.forEach((page) => {
       URL.revokeObjectURL(page.previewUrl);
+
       if (page.croppedPreviewUrl) {
         URL.revokeObjectURL(page.croppedPreviewUrl);
       }
@@ -1449,6 +1515,7 @@ export function DocumentScanner() {
 
   function resetPage(id: string) {
     const page = pagesRef.current.find((item) => item.id === id);
+
     if (page?.croppedPreviewUrl) {
       URL.revokeObjectURL(page.croppedPreviewUrl);
     }
@@ -1467,6 +1534,8 @@ export function DocumentScanner() {
     if (draggedId === targetId) {
       return;
     }
+
+    clearPdfResult();
 
     setPages((current) => {
       const oldIndex = current.findIndex((page) => page.id === draggedId);
@@ -1495,7 +1564,9 @@ export function DocumentScanner() {
     };
 
     const croppedCanvas = await createPerspectiveCanvas(cropPage, "balanced");
+
     const blob = await canvasToBlob(croppedCanvas, "image/jpeg", 0.9);
+
     return URL.createObjectURL(blob);
   }
 
@@ -1508,11 +1579,6 @@ export function DocumentScanner() {
       return;
     }
 
-    /*
-     * The first time a real scan
-     * mode is selected, detect the
-     * document automatically.
-     */
     if (!page.detectionAttempted) {
       const result = await runDetection(page);
 
@@ -1636,6 +1702,8 @@ export function DocumentScanner() {
     }
 
     try {
+      clearPdfResult();
+
       setIsProcessing(true);
       setError("");
 
@@ -1721,7 +1789,9 @@ export function DocumentScanner() {
         type: "application/pdf",
       });
 
-      downloadBlob(blob, `${safeFilename(filename)}.pdf`);
+      setPdfBlob(blob);
+      setPdfReady(true);
+      setPdfDownloadStatus("idle");
     } catch (caught) {
       console.error("PDF export error:", caught);
 
@@ -1733,6 +1803,41 @@ export function DocumentScanner() {
     } finally {
       setIsProcessing(false);
       setProcessingText("");
+    }
+  }
+
+  async function downloadPdf() {
+    if (!pdfBlob) {
+      setError("Create the PDF first.");
+
+      return;
+    }
+
+    try {
+      setPdfDownloadStatus("saving");
+      setError("");
+
+      const baseName = safeFilename(filename).replace(/\.pdf$/i, "");
+
+      const outputName = `${baseName}.pdf`;
+
+      const result = await saveBlob(pdfBlob, outputName, "application/pdf");
+
+      if (result === "saved") {
+        setPdfDownloadStatus("completed");
+      } else {
+        setPdfDownloadStatus("idle");
+      }
+    } catch (caught) {
+      console.error("PDF download error:", caught);
+
+      setPdfDownloadStatus("idle");
+
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The PDF could not be downloaded.",
+      );
     }
   }
 
@@ -1761,10 +1866,12 @@ export function DocumentScanner() {
         <div
           onDragEnter={(event) => {
             event.preventDefault();
+
             setIsDraggingFiles(true);
           }}
           onDragOver={(event) => {
             event.preventDefault();
+
             setIsDraggingFiles(true);
           }}
           onDragLeave={(event) => {
@@ -1907,7 +2014,11 @@ export function DocumentScanner() {
                 <div className="relative flex aspect-[3/4] items-center justify-center overflow-hidden bg-gray-100 p-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={page.croppedPreviewUrl ?? page.previewUrl}
+                    src={
+                      page.mode === "original"
+                        ? page.previewUrl
+                        : (page.croppedPreviewUrl ?? page.previewUrl)
+                    }
                     alt={`Page ${index + 1}`}
                     draggable={false}
                     className="max-h-full max-w-full object-contain transition duration-200"
@@ -2067,7 +2178,11 @@ export function DocumentScanner() {
                         key={option}
                         type="button"
                         disabled={isProcessing}
-                        onClick={() => setQuality(option)}
+                        onClick={() => {
+                          clearPdfResult();
+
+                          setQuality(option);
+                        }}
                         className={[
                           "rounded-xl border px-3 py-3 text-xs font-semibold capitalize",
                           quality === option
@@ -2093,7 +2208,11 @@ export function DocumentScanner() {
                       key={option}
                       type="button"
                       disabled={isProcessing}
-                      onClick={() => setPdfPageSize(option)}
+                      onClick={() => {
+                        clearPdfResult();
+
+                        setPdfPageSize(option);
+                      }}
                       className={[
                         "rounded-xl border px-4 py-3 text-sm font-semibold",
                         pdfPageSize === option
@@ -2171,6 +2290,54 @@ export function DocumentScanner() {
               </button>
             </div>
 
+            {pdfReady && pdfBlob && (
+              <div className="mt-5 rounded-2xl border border-green-200 bg-green-50 p-4">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-green-600 text-sm font-bold text-white">
+                    ✓
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-green-950">
+                      Your PDF is ready
+                    </p>
+
+                    <p className="mt-1 truncate text-xs text-green-700">
+                      {safeFilename(filename).replace(/\.pdf$/i, "")}
+                      .pdf
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={pdfDownloadStatus === "saving"}
+                  onClick={() => void downloadPdf()}
+                  className="mt-4 w-full rounded-xl bg-green-600 px-5 py-3 font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pdfDownloadStatus === "saving"
+                    ? "Opening save options..."
+                    : pdfDownloadStatus === "completed"
+                      ? "Download Again"
+                      : "↓ Download PDF"}
+                </button>
+
+                {pdfDownloadStatus === "completed" && (
+                  <p
+                    role="status"
+                    className="mt-3 text-center text-sm font-semibold text-green-700"
+                  >
+                    ✓ Download completed
+                  </p>
+                )}
+
+                <p className="mt-3 text-center text-xs leading-5 text-green-700/80">
+                  On iPhone or iPad, use the share sheet and choose Save to
+                  Files.
+                </p>
+              </div>
+            )}
+
             <p className="mt-4 text-center text-xs text-gray-400">
               Document processing happens in your browser. Selected images are
               not uploaded to the ConvertFlow server.
@@ -2214,40 +2381,55 @@ export function DocumentScanner() {
           }
           onCancel={() => setEditor(null)}
           onApply={() => {
+            const pageId = editorPage.id;
+
+            const appliedCorners = cloneCorners(editor.corners);
+
+            const appliedMode: ScanMode =
+              editorPage.mode === "original" ? "auto" : editorPage.mode;
+
+            setError("");
+
+            updatePage(pageId, {
+              corners: appliedCorners,
+              mode: appliedMode,
+              detected: true,
+              detectionAttempted: true,
+            });
+
+            setEditor(null);
+
             void (async () => {
               try {
-                setIsProcessing(true);
-                setProcessingText("Applying crop...");
-                setError("");
+                const previewPage: ScannerPage = {
+                  ...editorPage,
+                  corners: appliedCorners,
+                  mode: appliedMode,
+                };
 
                 const croppedPreviewUrl = await createCroppedPreview(
-                  editorPage,
-                  editor.corners,
+                  previewPage,
+                  appliedCorners,
                 );
 
-                if (editorPage.croppedPreviewUrl) {
-                  URL.revokeObjectURL(editorPage.croppedPreviewUrl);
-                }
+                setPages((current) =>
+                  current.map((page) => {
+                    if (page.id !== pageId) {
+                      return page;
+                    }
 
-                updatePage(editorPage.id, {
-                  corners: cloneCorners(editor.corners),
-                  croppedPreviewUrl,
-                  mode:
-                    editorPage.mode === "original" ? "auto" : editorPage.mode,
-                  detected: true,
-                  detectionAttempted: true,
-                });
+                    if (page.croppedPreviewUrl) {
+                      URL.revokeObjectURL(page.croppedPreviewUrl);
+                    }
 
-                setEditor(null);
+                    return {
+                      ...page,
+                      croppedPreviewUrl,
+                    };
+                  }),
+                );
               } catch (caught) {
-                setError(
-                  caught instanceof Error
-                    ? caught.message
-                    : "The crop could not be applied.",
-                );
-              } finally {
-                setIsProcessing(false);
-                setProcessingText("");
+                console.error("Cropped preview error:", caught);
               }
             })();
           }}
