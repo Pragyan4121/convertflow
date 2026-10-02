@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+
 import { PDFDocument } from "pdf-lib";
 
 import {
@@ -25,18 +26,23 @@ import { CSS } from "@dnd-kit/utilities";
 
 type UploadedFile = {
   id: string;
+
   file: File;
 };
 
 type FileUploaderProps = {
   multiple?: boolean;
+
   accept?: string;
+
   maxFiles?: number;
 };
 
 type SortableFileProps = {
   item: UploadedFile;
+
   index: number;
+
   onRemove: (id: string) => void;
 };
 
@@ -47,6 +53,30 @@ type FlowStage =
   | "ready"
   | "download-started";
 
+type WritableSaveFile = {
+  write: (data: Blob) => Promise<void>;
+  close: () => Promise<void>;
+};
+
+type SaveFileHandle = {
+  createWritable: () => Promise<WritableSaveFile>;
+};
+
+type WindowWithSaveFilePicker = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: Array<{
+      description: string;
+      accept: Record<string, string[]>;
+    }>;
+  }) => Promise<SaveFileHandle>;
+};
+
+type NavigatorWithFileShare = Navigator & {
+  canShare?: (data?: ShareData) => boolean;
+  share?: (data?: ShareData) => Promise<void>;
+};
+
 function formatFileSize(bytes: number) {
   if (bytes === 0) return "0 Bytes";
 
@@ -54,6 +84,7 @@ function formatFileSize(bytes: number) {
 
   const index = Math.min(
     Math.floor(Math.log(bytes) / Math.log(1024)),
+
     units.length - 1,
   );
 
@@ -63,10 +94,15 @@ function formatFileSize(bytes: number) {
 function SortableFile({ item, index, onRemove }: SortableFileProps) {
   const {
     attributes,
+
     listeners,
+
     setNodeRef,
+
     transform,
+
     transition,
+
     isDragging,
   } = useSortable({
     id: item.id,
@@ -74,6 +110,7 @@ function SortableFile({ item, index, onRemove }: SortableFileProps) {
 
   const style = {
     transform: CSS.Transform.toString(transform),
+
     transition,
   };
 
@@ -85,9 +122,13 @@ function SortableFile({ item, index, onRemove }: SortableFileProps) {
       {...listeners}
       className={[
         "flex cursor-grab touch-none select-none items-center gap-4",
+
         "rounded-2xl border bg-white p-4",
+
         "transition-[box-shadow,border-color]",
+
         "active:cursor-grabbing",
+
         isDragging
           ? "z-20 border-blue-400 shadow-xl"
           : "border-gray-200 hover:border-blue-300 hover:shadow-sm",
@@ -126,6 +167,7 @@ function SortableFile({ item, index, onRemove }: SortableFileProps) {
         }}
         onClick={(event) => {
           event.stopPropagation();
+
           onRemove(item.id);
         }}
         className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl text-xl text-gray-400 transition hover:bg-red-50 hover:text-red-600"
@@ -139,8 +181,11 @@ function SortableFile({ item, index, onRemove }: SortableFileProps) {
 function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
   const stageOrder: FlowStage[] = [
     "selected",
+
     "processing",
+
     "ready",
+
     "download-started",
   ];
 
@@ -149,22 +194,33 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
   const steps = [
     {
       id: "selected" as FlowStage,
+
       title: "Files selected",
+
       description: "Your PDFs are ready and arranged.",
     },
+
     {
       id: "processing" as FlowStage,
+
       title: "Processing",
+
       description: "ConvertFlow is combining the PDF pages.",
     },
+
     {
       id: "ready" as FlowStage,
+
       title: "Ready",
+
       description: "Your merged PDF has been created.",
     },
+
     {
       id: "download-started" as FlowStage,
+
       title: "Download",
+
       description: "Your browser has started the download.",
     },
   ];
@@ -207,6 +263,7 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
         <div className="relative space-y-7">
           {steps.map((step, index) => {
             const isCompleted = activeIndex > index;
+
             const isActive = activeIndex === index;
 
             return (
@@ -214,6 +271,7 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
                 <div
                   className={[
                     "relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 bg-white text-sm font-bold transition-all duration-300",
+
                     isCompleted
                       ? "border-green-500 bg-green-500 text-white"
                       : isActive
@@ -228,6 +286,7 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
                   <p
                     className={[
                       "font-semibold transition",
+
                       isCompleted || isActive
                         ? "text-gray-950"
                         : "text-gray-400",
@@ -239,6 +298,7 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
                   <p
                     className={[
                       "mt-1 text-sm",
+
                       isCompleted || isActive
                         ? "text-gray-500"
                         : "text-gray-400",
@@ -271,7 +331,9 @@ function FileFlow({ stage, progress }: { stage: FlowStage; progress: number }) {
 
 export function FileUploader({
   multiple = true,
+
   accept,
+
   maxFiles = 20,
 }: FileUploaderProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -287,6 +349,8 @@ export function FileUploader({
   const [error, setError] = useState("");
 
   const [downloadUrl, setDownloadUrl] = useState("");
+
+  const [mergedBlob, setMergedBlob] = useState<Blob | null>(null);
 
   const [flowStage, setFlowStage] = useState<FlowStage>("idle");
 
@@ -312,7 +376,10 @@ export function FileUploader({
 
   function clearResult() {
     setError("");
+
     setProgress(0);
+
+    setMergedBlob(null);
 
     if (files.length > 0) {
       setFlowStage("selected");
@@ -337,7 +404,10 @@ export function FileUploader({
     }
 
     setError("");
+
     setProgress(0);
+
+    setMergedBlob(null);
 
     setDownloadUrl((currentUrl) => {
       if (currentUrl) {
@@ -368,6 +438,7 @@ export function FileUploader({
 
       const newFiles = pdfFiles.map((file) => ({
         id: crypto.randomUUID(),
+
         file,
       }));
 
@@ -393,7 +464,10 @@ export function FileUploader({
     });
 
     setError("");
+
     setProgress(0);
+
+    setMergedBlob(null);
 
     setDownloadUrl((currentUrl) => {
       if (currentUrl) {
@@ -424,23 +498,31 @@ export function FileUploader({
     });
 
     clearResult();
+
     setFlowStage("selected");
   }
 
   async function mergePdfs() {
     if (files.length < 2) {
       setError("Please select at least two PDF files.");
+
       return;
     }
 
     try {
       setError("");
+
       setIsProcessing(true);
+
       setProgress(0);
+
       setFlowStage("processing");
+
+      setMergedBlob(null);
 
       if (downloadUrl) {
         URL.revokeObjectURL(downloadUrl);
+
         setDownloadUrl("");
       }
 
@@ -455,6 +537,7 @@ export function FileUploader({
 
         const pages = await mergedPdf.copyPages(
           sourcePdf,
+
           sourcePdf.getPageIndices(),
         );
 
@@ -483,6 +566,8 @@ export function FileUploader({
         type: "application/pdf",
       });
 
+      setMergedBlob(blob);
+
       const url = URL.createObjectURL(blob);
 
       setDownloadUrl(url);
@@ -505,8 +590,114 @@ export function FileUploader({
     }
   }
 
-  function handleDownloadStarted() {
-    setFlowStage("download-started");
+  async function downloadMergedPdf() {
+    if (!mergedBlob) {
+      setError(
+        "The merged PDF is not ready yet. Please merge the files again.",
+      );
+      return;
+    }
+
+    const outputFilename = "ConvertFlow-Merged.pdf";
+
+    try {
+      setError("");
+
+      // Desktop Chromium: show a real Save As dialog.
+      const savePicker = (window as WindowWithSaveFilePicker)
+        .showSaveFilePicker;
+
+      if (savePicker) {
+        const fileHandle = await savePicker({
+          suggestedName: outputFilename,
+          types: [
+            {
+              description: "PDF document",
+              accept: {
+                "application/pdf": [".pdf"],
+              },
+            },
+          ],
+        });
+
+        const writable = await fileHandle.createWritable();
+        await writable.write(mergedBlob);
+        await writable.close();
+
+        setFlowStage("download-started");
+        return;
+      }
+
+      // Mobile fallback: open the native share sheet when file sharing is supported.
+      const shareNavigator = navigator as NavigatorWithFileShare;
+      const mergedFile = new File([mergedBlob], outputFilename, {
+        type: "application/pdf",
+        lastModified: Date.now(),
+      });
+
+      if (
+        shareNavigator.share &&
+        shareNavigator.canShare?.({
+          files: [mergedFile],
+        })
+      ) {
+        await shareNavigator.share({
+          files: [mergedFile],
+          title: "ConvertFlow Merged PDF",
+        });
+
+        setFlowStage("download-started");
+        return;
+      }
+
+      // Final fallback: trigger a normal browser download.
+      const temporaryUrl = URL.createObjectURL(mergedBlob);
+      const anchor = document.createElement("a");
+
+      anchor.href = temporaryUrl;
+      anchor.download = outputFilename;
+      anchor.style.display = "none";
+
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+
+      window.setTimeout(() => {
+        URL.revokeObjectURL(temporaryUrl);
+      }, 5000);
+
+      setFlowStage("download-started");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
+
+      console.error("Merged PDF download error:", err);
+
+      // If native save/share fails, still try a direct browser download.
+      try {
+        const temporaryUrl = URL.createObjectURL(mergedBlob);
+        const anchor = document.createElement("a");
+
+        anchor.href = temporaryUrl;
+        anchor.download = outputFilename;
+        anchor.style.display = "none";
+
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+
+        window.setTimeout(() => {
+          URL.revokeObjectURL(temporaryUrl);
+        }, 5000);
+
+        setFlowStage("download-started");
+      } catch {
+        setError(
+          "The merged PDF is ready, but your browser blocked the download. Please allow downloads for this site and try again.",
+        );
+      }
+    }
   }
 
   return (
@@ -562,6 +753,7 @@ export function FileUploader({
         }}
         className={[
           "cursor-pointer rounded-3xl border-2 border-dashed px-6 py-14 text-center transition-all duration-300",
+
           isDraggingOverUploader
             ? "scale-[1.01] border-blue-500 bg-blue-50"
             : "border-gray-300 bg-white hover:border-blue-400",
@@ -571,6 +763,7 @@ export function FileUploader({
           <div
             className={[
               "mx-auto flex h-16 w-16 items-center justify-center rounded-2xl text-3xl transition-all duration-300",
+
               isDraggingOverUploader
                 ? "translate-y-1 bg-blue-100 text-blue-700"
                 : "bg-blue-50 text-blue-600",
@@ -705,14 +898,14 @@ export function FileUploader({
                   {files.length} PDF files were successfully combined.
                 </p>
 
-                <a
-                  href={downloadUrl}
-                  download="ConvertFlow-Merged.pdf"
-                  onClick={handleDownloadStarted}
-                  className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-green-600 px-6 py-4 font-bold text-white transition hover:bg-green-700 sm:w-auto"
+                <button
+                  type="button"
+                  onClick={() => void downloadMergedPdf()}
+                  disabled={!mergedBlob}
+                  className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-green-600 px-6 py-4 font-bold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300 sm:w-auto"
                 >
                   ↓ Download Merged PDF
-                </a>
+                </button>
 
                 {flowStage === "download-started" && (
                   <p
