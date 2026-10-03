@@ -43,6 +43,15 @@ export const tools: ToolDefinition[] = [
     status: "active",
   },
   {
+    id: "edit-pdf",
+    name: "Edit PDF",
+    description:
+      "Edit existing PDF text, add text, images, signatures, highlights, whiteout and drawings, manage pages, and export the edited PDF.",
+    href: "/tools/edit-pdf",
+    category: "pdf",
+    status: "active",
+  },
+  {
     id: "compress-image",
     name: "Reduce Image Size",
     description: "Reduce image file size while preserving useful quality.",
